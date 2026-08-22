@@ -1,0 +1,51 @@
+# AutoPatch Sentinel - Configuration
+# Adjust these values to match your environment and preferences.
+
+pipeline:
+  max_retries: 3               # Max LLM patch retry attempts before giving up
+  fuzz_duration_s: 30          # Duration for fuzzing runs (seconds)
+  refuzz_duration_s: 30        # Duration for re-fuzzing burst in Stage 3 (seconds)
+  verbose: false               # Enable debug logging
+
+# ── Target configuration ──────────────────────────────────────────────────────
+targets:
+  default: telemetry_parser
+  available:
+    - telemetry_parser
+
+# ── Fuzzer configuration ──────────────────────────────────────────────────────
+fuzzer:
+  mode: seed_replay            # Options: seed_replay | libfuzzer | afl
+  max_input_len: 4096          # Maximum fuzzing input size (bytes)
+  corpus_dir: targets/telemetry_parser/corpus
+
+# ── LLM configuration ────────────────────────────────────────────────────────
+llm:
+  provider: gemini             # Options: gemini | claude | openai
+  # model: gemini-2.5-pro      # Uncomment to override default model
+  # model: claude-sonnet-4-5
+  # model: gpt-4o
+  temperature: 0.1
+  max_output_tokens: 2048
+
+# ── Build configuration ───────────────────────────────────────────────────────
+build:
+  compiler: clang              # Primary compiler (clang recommended for ASan)
+  asan_flags:
+    - -fsanitize=address,undefined
+    - -fno-omit-frame-pointer
+    - -g
+    - -O1
+  extra_flags: []
+
+# ── Output configuration ──────────────────────────────────────────────────────
+output:
+  reports_dir: reports
+  crashes_dir: crashes
+  patches_dir: patches
+
+# ── API Keys (alternatively, set as environment variables) ────────────────────
+# api_keys:
+#   gemini: "YOUR_GEMINI_API_KEY"        # Or set GEMINI_API_KEY env var
+#   anthropic: "YOUR_ANTHROPIC_API_KEY"  # Or set ANTHROPIC_API_KEY env var
+#   openai: "YOUR_OPENAI_API_KEY"        # Or set OPENAI_API_KEY env var

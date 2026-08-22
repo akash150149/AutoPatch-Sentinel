@@ -1,0 +1,20 @@
+# AutoPatch Sentinel - Python Dependencies
+
+# ── Core pipeline ─────────────────────────────────────────────────────────────
+pyyaml>=6.0.2          # Config file parsing
+
+# ── LLM API clients (install the one(s) you use) ─────────────────────────────
+google-generativeai>=0.8.0   # Google Gemini API
+anthropic>=0.34.0            # Anthropic Claude API
+openai>=1.40.0               # OpenAI API
+
+# ── Terminal UI ───────────────────────────────────────────────────────────────
+rich>=13.7.0           # Beautiful terminal output, progress bars, tables
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-timeout>=2.3.0
+
+# ── Optional (static analysis integration) ────────────────────────────────────
+# cppcheck is a system package: sudo apt install cppcheck
+# clang-tidy is part of LLVM: sudo apt install clang-tools

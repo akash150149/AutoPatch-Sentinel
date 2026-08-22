@@ -1,0 +1,115 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── C/C++ Build Artifacts ─────────────────────────────────────────────────────
+# Compiled binaries (rebuilt by `make asan`)
+targets/telemetry_parser/telemetry_parser_asan
+targets/telemetry_parser/telemetry_parser
+targets/telemetry_parser/fuzzer_target
+targets/telemetry_parser/afl_target
+
+# Object files
+*.o
+*.a
+*.so
+
+# Backup files created by patch applicator (auto-generated, not source)
+targets/**/*.c.bak
+targets/**/*.h.bak
+
+# ── Fuzzing Artifacts ─────────────────────────────────────────────────────────
+# AFL++ working directories
+targets/telemetry_parser/afl_findings/
+targets/telemetry_parser/corpus/
+
+# ── Pipeline Runtime Output ───────────────────────────────────────────────────
+# Crash inputs and ASan logs captured during runs
+# Keep the directory but ignore generated files
+crashes/*.bin
+crashes/*.log
+crashes/*.asan.log
+
+# Generated patches from LLM (keep directory, ignore content)
+patches/*.patch
+
+# Generated reports (keep directory, ignore content)
+reports/*.md
+reports/*.json
+reports/*.html
+
+# ── API Keys & Secrets (NEVER commit these) ───────────────────────────────────
+.env
+.env.*
+secrets.yaml
+secrets.json
+*_api_key.txt
+*.key
+
+# ── OS & Editor Artifacts ─────────────────────────────────────────────────────
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/settings.json
+.vscode/launch.json
+
+# JetBrains IDEs
+.idea/
+
+# Vim
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── What IS tracked (important source files) ──────────────────────────────────
+# These are explicitly NOT ignored:
+#   targets/telemetry_parser/telemetry_parser.c    ← vulnerable source
+#   targets/telemetry_parser/telemetry_parser.h    ← header
+#   targets/telemetry_parser/fuzzer_harness.cc     ← fuzzer harness
+#   targets/telemetry_parser/Makefile              ← build recipes
+#   targets/telemetry_parser/generate_seeds.py     ← seed generator
+#   targets/telemetry_parser/tests/*.bin           ← regression test payloads (small, deterministic)
+#   targets/seeds/crash_overflow.bin               ← known crashing seed (needed for demo)
+#   src/*.py                                       ← pipeline source code
+#   tests/*.py                                     ← unit tests
+#   config.yaml                                    ← pipeline configuration
+#   requirements.txt                               ← Python dependencies
+#   README.md                                      ← documentation
+
+# Force-include the seed .bin files needed for the demo
+!targets/seeds/crash_overflow.bin
+!targets/seeds/valid_gps.bin
+!targets/seeds/minimal_header.bin
+!targets/telemetry_parser/tests/valid_gps_pkt.bin
+!targets/telemetry_parser/tests/valid_temp_pkt.bin
+!targets/telemetry_parser/tests/valid_multi_pkt.bin
