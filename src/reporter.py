@@ -157,6 +157,40 @@ class Reporter:
             f"",
             f"---",
             f"",
+            # ── 2b. Static Analysis Pre-Screening (SAST) ──────────────────────
+            f"## 2b. Static Analysis Pre-Screening (SAST)",
+            f"",
+        ]
+
+        sast_findings = getattr(crash, "sast_findings", [])
+        if sast_findings:
+            sections += [
+                f"> ⚠️ **{len(sast_findings)} static finding(s) correlated with the crash site** — "
+                f"root cause flagged by static analysis AND confirmed exploitable at runtime.",
+                f"",
+                f"| Tool | Severity | CWE | Message | Line |",
+                f"|------|----------|-----|---------|------|",
+            ]
+            for sf in sast_findings:
+                cwe = sf.cwe or "—"
+                sections.append(
+                    f"| `{sf.tool}` | `{sf.severity}` | `{cwe}` | {sf.message[:80]} | {sf.line} |"
+                )
+            sections += [f"",
+                f"> **Static → Dynamic confirmation:** The static analysis warning at line {sast_findings[0].line} "
+                f"matches the runtime AddressSanitizer crash at `{crash.crash_file}:{crash.crash_line}`.",
+                f"",
+            ]
+        else:
+            sections += [
+                f"_No SAST findings correlated near the crash site. "
+                f"(Install `cppcheck`/`clang-tidy` and re-run for full coverage.)_",
+                f"",
+            ]
+
+        sections += [
+            f"---",
+            f"",
             # ── 3. Root Cause Analysis ───────────────────────────────────────
             f"## 3. Root Cause Analysis",
             f"",
@@ -286,6 +320,22 @@ class Reporter:
             "pipeline": {
                 "total_duration_s": round(total_duration_s, 2),
                 "crash_input": str(crash_input_path) if crash_input_path else None,
+            },
+            "sast": {
+                "findings_count": len(getattr(crash, "sast_findings", [])),
+                "correlated_findings": [
+                    {
+                        "tool": sf.tool,
+                        "severity": sf.severity,
+                        "cwe": sf.cwe,
+                        "message": sf.message,
+                        "file": sf.source_file,
+                        "line": sf.line,
+                        "check_id": sf.check_id,
+                    }
+                    for sf in getattr(crash, "sast_findings", [])
+                ],
+                "static_dynamic_confirmed": len(getattr(crash, "sast_findings", [])) > 0,
             },
         }
         return json.dumps(data, indent=2)

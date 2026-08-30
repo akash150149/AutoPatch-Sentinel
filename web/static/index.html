@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoPatch Sentinel — Tactical Command Center</title>
+  <meta name="description" content="Real-time vulnerability find, patch, and prove dashboard for AutoPatch Sentinel." />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div class="logo-text">
+        <h1>AutoPatch Sentinel</h1>
+        <p>FIND → PATCH → PROVE // TACTICAL COMMAND CENTER</p>
+      </div>
+    </div>
+
+    <div class="header-controls">
+
+      <!-- Status pill -->
+      <div class="status-pill" id="status-pill">
+        <div class="dot"></div>
+        <span class="pill-text">Idle</span>
+      </div>
+
+      <!-- Target -->
+      <div>
+        <label for="sel-target">Target</label>
+        <select id="sel-target">
+          <option value="telemetry_parser">telemetry_parser</option>
+        </select>
+      </div>
+
+      <!-- Provider -->
+      <div>
+        <label for="sel-provider">LLM</label>
+        <select id="sel-provider">
+          <option value="ollama">Ollama (local)</option>
+          <option value="gemini">Gemini</option>
+          <option value="claude">Claude</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
+
+      <!-- Mode -->
+      <div>
+        <label for="sel-mode">Mode</label>
+        <select id="sel-mode">
+          <option value="seed_replay">Seed Replay</option>
+          <option value="libfuzzer">libFuzzer</option>
+          <option value="afl">AFL++</option>
+        </select>
+      </div>
+
+      <!-- Retries -->
+      <div>
+        <label for="inp-retries">Retries</label>
+        <input type="number" id="inp-retries" value="3" min="1" max="10" style="width:56px" />
+      </div>
+
+      <!-- No SAST toggle -->
+      <div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary)">
+        <input type="checkbox" id="chk-nosast" />
+        <label for="chk-nosast" style="cursor:pointer">Skip SAST</label>
+      </div>
+
+      <button class="btn btn-danger" id="btn-reset" title="Reset pipeline state">↺ Reset</button>
+      <button class="btn btn-primary" id="btn-run" title="Start AutoPatch Sentinel pipeline">
+        ⚡ Engage Pipeline
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Stage Progress Bar ───────────────────────────────────────────────── -->
+  <section class="pipeline-progress" aria-label="Pipeline stages">
+    <h3>Pipeline Execution Stages</h3>
+    <div class="stages" id="stages">
+      <!-- Injected by app.js initStages() -->
+    </div>
+  </section>
+
+  <!-- ── Result Banner (hidden until done) ───────────────────────────────── -->
+  <div id="result-banner" class="correlation-banner" style="display:none;margin-bottom:16px"></div>
+
+  <!-- ── Main Grid ────────────────────────────────────────────────────────── -->
+  <div class="main-grid">
+
+    <!-- LEFT COLUMN: Vulnerability & Triage -->
+    <div>
+
+      <!-- SAST Pre-screening Card -->
+      <div class="card section-gap" id="sast-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="icon">🔍</span>
+            Stage 0 — Static Analysis (SAST)
+          </div>
+          <span class="card-badge badge-idle" id="sast-badge">Pre-screen</span>
+        </div>
+        <div class="card-body" id="sast-body">
+          <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            Awaiting Stage 0 SAST scan…
+          </div>
+        </div>
+      </div>
+
+      <!-- Dynamic Crash Card -->
+      <div class="card section-gap" id="crash-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="icon">💥</span>
+            Stage 2–3 — Dynamic Crash + Triage
+          </div>
+          <span class="card-badge badge-idle" id="crash-badge">ASan</span>
+        </div>
+        <div class="card-body" id="crash-body">
+          <div class="empty-state">
+            <div class="empty-icon">💥</div>
+            Awaiting crash discovery…
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT COLUMN: Remediation & Verification -->
+    <div>
+
+      <!-- LLM Patch Card -->
+      <div class="card section-gap" id="patch-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="icon">🔧</span>
+            Stage 4 — LLM-Generated Patch
+          </div>
+          <span class="card-badge badge-idle">Unified Diff</span>
+        </div>
+        <div class="card-body">
+          <p id="patch-explain" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;font-style:italic"></p>
+          <div class="diff-viewer" id="patch-diff">
+            <div class="empty-state">
+              <div class="empty-icon">🔧</div>
+              Awaiting LLM patch…
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3-Stage Verification Gates Card -->
+      <div class="card section-gap">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="icon">🛡️</span>
+            Stage 6 — Verification Gate
+          </div>
+          <span class="card-badge badge-idle">3 Stages</span>
+        </div>
+        <div class="card-body">
+          <div class="verification-gates" id="gates-container">
+            <!-- Injected by updateVerification() -->
+            <div class="gate"><div class="gate-indicator">◯</div>
+              <div class="gate-info">
+                <div class="gate-name">Stage 1: Crash Invalidation</div>
+                <div class="gate-detail">Replay crashing input against patched binary</div>
+              </div>
+            </div>
+            <div class="gate"><div class="gate-indicator">◯</div>
+              <div class="gate-info">
+                <div class="gate-name">Stage 2: Regression Suite</div>
+                <div class="gate-detail">Run all valid test payloads</div>
+              </div>
+            </div>
+            <div class="gate"><div class="gate-indicator">◯</div>
+              <div class="gate-info">
+                <div class="gate-name">Stage 3: Re-Fuzzing Burst</div>
+                <div class="gate-detail">Short re-fuzz burst — no new crashes</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Reports Sidebar (below grid) ────────────────────────────────────── -->
+  <div class="card mt-12">
+    <div class="card-header">
+      <div class="card-title"><span class="icon">📋</span> Audit Reports</div>
+      <span class="card-badge badge-info">History</span>
+    </div>
+    <div id="reports-list">
+      <div class="text-muted" style="font-size:12px;padding:12px">Loading reports…</div>
+    </div>
+  </div>
+
+  <!-- ── Terminal Log ──────────────────────────────────────────────────────── -->
+  <div class="terminal mt-12">
+    <div class="terminal-header">
+      <span>▶ Pipeline Log</span>
+      <span id="terminal-stage" class="text-cyan" style="font-size:11px"></span>
+    </div>
+    <div class="terminal-body" id="terminal-body">
+      <span class="log-line text-muted">— AutoPatch Sentinel standing by. Click "Engage Pipeline" to start. —</span>
+    </div>
+  </div>
+
+</div><!-- /.app -->
+
+<script src="/static/app.js"></script>
+</body>
+</html>

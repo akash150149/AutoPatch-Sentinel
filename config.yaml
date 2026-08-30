@@ -49,3 +49,20 @@ output:
 #   gemini: "YOUR_GEMINI_API_KEY"        # Or set GEMINI_API_KEY env var
 #   anthropic: "YOUR_ANTHROPIC_API_KEY"  # Or set ANTHROPIC_API_KEY env var
 #   openai: "YOUR_OPENAI_API_KEY"        # Or set OPENAI_API_KEY env var
+
+# ── Static Analysis (SAST) configuration ────────────────────────────────────
+sast:
+  enabled: true                # Set to false or use --no-sast to skip Stage 0
+  tools:
+    - cppcheck                 # sudo apt install cppcheck
+    - clang-tidy               # sudo apt install clang-tools
+  timeout_s: 30                # Per-tool timeout in seconds
+  # Install hints:
+  #   Linux/WSL: sudo apt install cppcheck clang-tools
+  #   Windows:   choco install cppcheck  |  winget install LLVM.LLVM
+
+# ── Web Command Center ──────────────────────────────────────────────────
+web:
+  host: 127.0.0.1              # Bind address for the web server
+  port: 8000                   # Port for the web dashboard
+  # Launch: python -m web.app  (then open http://localhost:8000)

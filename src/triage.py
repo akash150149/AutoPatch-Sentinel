@@ -12,6 +12,7 @@ Extracts:
   - Relevant function name
   - Sanitizer stack trace (filtered to project frames only)
   - Shadow memory context (if present)
+  - SAST correlation: static analysis findings near the crash site
 """
 
 from __future__ import annotations
@@ -20,7 +21,10 @@ import re
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from sast import SastFinding, SastReport
 
 log = logging.getLogger("sentinel.triage")
 
@@ -51,6 +55,7 @@ class CrashReport:
     raw_asan_log: str                   # Full raw sanitizer output
     cwe_id: Optional[str]               # Mapped CWE if known
     severity: str                       # "CRITICAL" / "HIGH" / "MEDIUM" / "LOW"
+    sast_findings: list = field(default_factory=list)  # SastFinding objects correlated to crash site
 
     def summary(self) -> str:
         """One-line human-readable summary."""
@@ -65,6 +70,7 @@ class CrashReport:
         """
         Format the crash report into a rich context block for the LLM prompt.
         Includes the sanitizer report + optional source code excerpt.
+        If SAST findings were correlated, includes a static+dynamic confirmation block.
         """
         lines = [
             "=== CRASH TRIAGE REPORT ===",
@@ -81,6 +87,25 @@ class CrashReport:
             if frame.source_file and frame.line_no:
                 loc = f" [{frame.source_file}:{frame.line_no}]"
             lines.append(f"  #{frame.frame_no} {frame.function}{loc}")
+
+        # Static + Dynamic Correlation block
+        if self.sast_findings:
+            lines += [
+                "",
+                "--- Static + Dynamic Correlation [SAST Pre-Screen] ---",
+                f"[!] Dynamic Crash: {self.error_type} in {self.crash_function}() @ "
+                f"{self.crash_file}:{self.crash_line}",
+            ]
+            for sf in self.sast_findings[:5]:
+                cwe_tag = f" [{sf.cwe}]" if sf.cwe else ""
+                lines.append(
+                    f"[!] Static Finding ({sf.tool}): {sf.check_id}{cwe_tag} — "
+                    f"{sf.message} @ line {sf.line}"
+                )
+            lines.append(
+                "=> Root cause independently flagged by static analysis "
+                "AND confirmed exploitable at runtime via ASan."
+            )
 
         if source_snippet:
             lines += [
@@ -178,9 +203,15 @@ class TriageEngine:
         self.project_root = Path(project_root).resolve()
         self.filter_project = filter_project_frames
 
-    def parse(self, asan_output: str) -> CrashReport:
+    def parse(self, asan_output: str, sast_report=None) -> CrashReport:
         """
         Parse raw ASan/UBSan stderr output into a CrashReport.
+
+        Args:
+            asan_output:  Raw ASan/UBSan stderr text.
+            sast_report:  Optional SastReport from Stage 0. If provided,
+                          findings near the crash site are correlated and
+                          embedded in the report for LLM and audit output.
         """
         error_type = self._extract_error_type(asan_output)
         access_type, access_size = self._extract_access(asan_output)
@@ -197,6 +228,20 @@ class TriageEngine:
             ubsan_file = crash_frame.source_file
             ubsan_line = crash_frame.line_no
 
+        # Correlate SAST findings with the crash site (±5 lines)
+        correlated_findings = []
+        if sast_report is not None and ubsan_file and ubsan_line:
+            correlated_findings = sast_report.findings_for_line(
+                source_file=ubsan_file,
+                line=ubsan_line,
+                window=5,
+            )
+            if correlated_findings:
+                log.info(
+                    f"[SAST] Correlated {len(correlated_findings)} static finding(s) "
+                    f"near crash at {ubsan_file}:{ubsan_line}"
+                )
+
         report = CrashReport(
             error_type=error_type,
             access_type=access_type,
@@ -208,6 +253,7 @@ class TriageEngine:
             raw_asan_log=asan_output,
             cwe_id=cwe,
             severity=severity,
+            sast_findings=correlated_findings,
         )
         log.info(f"Triaged: {report.summary()}")
         return report

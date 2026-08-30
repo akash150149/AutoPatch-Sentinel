@@ -45,6 +45,7 @@ from triage      import TriageEngine, extract_source_context
 from llm_patcher import LLMPatcher, LLMProvider
 from verifier    import Verifier
 from reporter    import Reporter
+from sast        import StaticAnalyzer, SastReport
 
 # Rich for beautiful terminal output
 try:
@@ -74,6 +75,47 @@ def setup_logging(verbose: bool = False):
     )
 
 log = logging.getLogger("sentinel.orchestrator")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Event emitter — shared state dict the Web Command Center polls via /api/status
+# ─────────────────────────────────────────────────────────────────────────────
+
+# This dict is mutated in-place by run_pipeline() so the web server can read it
+# from a background thread without blocking.
+pipeline_state: dict = {
+    "running":        False,
+    "stage":          "idle",          # current stage name
+    "stage_index":    0,               # 0-7
+    "total_stages":   7,
+    "target":         "",
+    "sast_report":    None,            # SastReport.to_dict() when done
+    "crash_found":    False,
+    "crash_summary":  "",
+    "asan_log":       "",
+    "patch_diff":     "",
+    "patch_explain":  "",
+    "verification":   None,            # VerificationResult stage booleans
+    "report_md":      "",
+    "report_json":    "",
+    "log_lines":      [],              # list of recent log strings
+    "finished":       False,
+    "success":        False,
+    "error":          "",
+}
+
+
+def _emit(stage: str, index: int, **kwargs):
+    """Update pipeline_state in-place; safe for concurrent reads by web thread."""
+    pipeline_state["stage"]       = stage
+    pipeline_state["stage_index"] = index
+    for k, v in kwargs.items():
+        pipeline_state[k] = v
+    msg = f"[{index}/{pipeline_state['total_stages']}] {stage}"
+    pipeline_state["log_lines"].append(msg)
+    # Cap log history to 200 lines
+    if len(pipeline_state["log_lines"]) > 200:
+        pipeline_state["log_lines"] = pipeline_state["log_lines"][-200:]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,15 +204,50 @@ def run_pipeline(args: argparse.Namespace) -> int:
     _info(f"Mode:      {args.mode}")
     _info(f"Retries:   {args.max_retries}")
 
+    # Reset pipeline state for this run
+    pipeline_state.update({
+        "running": True, "finished": False, "success": False, "error": "",
+        "target": args.target, "log_lines": [], "crash_found": False,
+        "sast_report": None, "patch_diff": "", "verification": None,
+    })
+
+    sast_report = SastReport()  # Empty default; populated in Stage 0 if enabled
+
+    # ── Step 0: Static Analysis (SAST pre-screening) ─────────────────────────
+    if not getattr(args, "no_sast", False):
+        _step(0, 7, "Running Static Analysis (SAST pre-screening)")
+        _emit("SAST Pre-screening", 0)
+        try:
+            analyzer  = StaticAnalyzer(target_dir=target_dir)
+            sast_report = analyzer.run_all(source_files)
+            _emit("SAST Pre-screening", 0, sast_report=sast_report.to_dict())
+            if sast_report.tools_missing:
+                _info(f"Tools not found (install for full coverage): {', '.join(sast_report.tools_missing)}")
+            if sast_report.has_findings():
+                _ok(f"SAST: {sast_report.errors_count} error(s), {sast_report.warnings_count} warning(s) found")
+                for finding in sast_report.findings[:5]:
+                    _info(finding.summary())
+            else:
+                _info("SAST: No findings (tools may not be installed)")
+        except Exception as e:
+            _info(f"SAST stage skipped due to error: {e}")
+    else:
+        _info("SAST pre-screening skipped (--no-sast)")
+
     # ── Step 1: Build ────────────────────────────────────────────────────────
-    _step(1, 6, "Building target with ASan + UBSan")
+    _step(1, 7, "Building target with ASan + UBSan")
+    _emit("Building with ASan + UBSan", 1)
     compiler = Compiler(target_dir)
     build    = compiler.build_asan(source_files, asan_binary_name)
 
     if not build.success:
         _fail(f"Build failed:\n{build.stderr}")
+        _emit("Build", 1, error=f"Build failed: {build.stderr[:200]}")
+        pipeline_state["running"] = False
+        pipeline_state["finished"] = True
         return 1
     _ok(f"Built: {asan_binary_name}")
+    _emit("Build complete", 1)
 
     # Generate seeds if not already present
     seed_files = list(seeds_dir.glob("*.bin")) if seeds_dir.exists() else []
@@ -180,7 +257,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         seed_files = list(seeds_dir.glob("*.bin"))
 
     # ── Step 2: Fuzz ─────────────────────────────────────────────────────────
-    _step(2, 6, f"Fuzzing target [{args.mode}]")
+    _step(2, 7, f"Fuzzing target [{args.mode}]")
+    _emit(f"Fuzzing [{args.mode}]", 2)
     fuzz_mode = {
         "seed_replay": FuzzMode.SEED_REPLAY,
         "libfuzzer":   FuzzMode.LIBFUZZER,
@@ -198,15 +276,25 @@ def run_pipeline(args: argparse.Namespace) -> int:
     if not fuzz_result.crashed:
         _fail("No crashes found. Target may already be patched, or seeds are insufficient.")
         _info("Hint: Add known crashing seeds to targets/seeds/ or run with --mode libfuzzer")
+        _emit("Fuzzing complete — no crash", 2, crash_found=False)
+        pipeline_state["running"] = False
+        pipeline_state["finished"] = True
         return 1
-    _ok(f"Crash found: {fuzz_result.crash_input_path.name if fuzz_result.crash_input_path else 'unknown'}")
+    crash_summary = fuzz_result.crash_input_path.name if fuzz_result.crash_input_path else "unknown"
+    _ok(f"Crash found: {crash_summary}")
     _info(f"ASan output excerpt: {fuzz_result.asan_log[:200].strip()}")
+    _emit("Crash found", 2,
+          crash_found=True,
+          crash_summary=crash_summary,
+          asan_log=fuzz_result.asan_log)
 
     # ── Step 3: Triage ───────────────────────────────────────────────────────
-    _step(3, 6, "Triaging crash with ASan log parser")
+    _step(3, 7, "Triaging crash with ASan log parser")
+    _emit("Crash triage", 3)
     triage_engine = TriageEngine(project_root=project_root)
-    crash_report  = triage_engine.parse(fuzz_result.asan_log)
+    crash_report  = triage_engine.parse(fuzz_result.asan_log, sast_report=sast_report)
     _ok(f"Triaged: {crash_report.summary()}")
+    _emit("Crash triage complete", 3, crash_summary=crash_report.summary())
 
     # Extract source context around the crash line
     source_file_path = target_dir / main_source
@@ -221,7 +309,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
     crash_context = crash_report.to_llm_context(source_snippet)
 
     # ── Steps 4-5-6: LLM Patch + Rebuild + Verify (retry loop) ──────────────
-    _step(4, 6, "Generating patch via LLM")
+    _step(4, 7, "Generating patch via LLM")
+    _emit("LLM patch generation", 4)
 
     provider_enum = {
         "gemini": LLMProvider.GEMINI,
@@ -268,9 +357,13 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
         _ok(f"Patch applied (attempt {attempt_no})")
         _info(f"Explanation: {patch_result.attempt.explanation[:200]}")
+        _emit("Patch applied", 4,
+              patch_diff=patch_result.attempt.diff_text,
+              patch_explain=patch_result.attempt.explanation)
 
         # 5. Rebuild
-        _step(5, 6, f"Rebuilding with patch (attempt {attempt_no})")
+        _step(5, 7, f"Rebuilding with patch (attempt {attempt_no})")
+        _emit("Rebuild after patch", 5)
         rebuild = compiler.rebuild_after_patch(source_files, asan_binary_name)
         if not rebuild.success:
             _fail(f"Rebuild failed:\n{rebuild.stderr[:500]}")
@@ -283,7 +376,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         _ok("Rebuild successful")
 
         # 6. Verify
-        _step(6, 6, f"Running 3-stage verification (attempt {attempt_no})")
+        _step(6, 7, f"Running 3-stage verification (attempt {attempt_no})")
+        _emit("3-stage verification", 6)
         verify = verifier.verify_all(crash_input=fuzz_result.crash_input_path)
         final_patch  = patch_result.attempt
         final_verify = verify
@@ -292,6 +386,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
             console.print(verify.summary_table())
         else:
             print(verify.summary_table())
+
+        # Emit verification state for web dashboard
+        _emit("3-stage verification", 6, verification={
+            s.stage.value: {"passed": s.passed, "details": s.details}
+            for s in verify.stage_results
+        })
 
         if verify.all_passed:
             _ok("🎉 ALL VERIFICATION STAGES PASSED — Fix confirmed!")
@@ -306,7 +406,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
     # ── Step 7: Generate report ──────────────────────────────────────────────
     total_duration = time.time() - pipeline_start
-    _step(6, 6, "Generating audit report")
+    _step(7, 7, "Generating audit report")
+    _emit("Generating audit report", 7)
     reporter = Reporter(reports_dir=reports_dir)
     md_path, json_path = reporter.generate(
         target_name=args.target,
@@ -319,8 +420,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
     )
     _ok(f"Report (MD):   {md_path}")
     _ok(f"Report (JSON): {json_path}")
+    _emit("Report generated", 7, report_md=str(md_path), report_json=str(json_path))
 
     if final_verify and final_verify.all_passed:
+        pipeline_state.update({"running": False, "finished": True, "success": True})
         if RICH_AVAILABLE:
             console.print(Panel.fit(
                 f"[bold green]✅ AutoPatch Sentinel: FIX VERIFIED[/bold green]\n"
@@ -329,6 +432,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
             ))
         return 0
     else:
+        pipeline_state.update({"running": False, "finished": True, "success": False})
         if RICH_AVAILABLE:
             console.print(Panel.fit(
                 f"[bold red]❌ AutoPatch Sentinel: FIX NOT VERIFIED[/bold red]\n"
@@ -383,6 +487,8 @@ Examples:
                         help="Fuzzing / re-fuzz burst duration in seconds (default: 30)")
     parser.add_argument("--verbose",       action="store_true",
                         help="Enable debug logging")
+    parser.add_argument("--no-sast",       action="store_true",
+                        help="Skip Stage 0 static analysis pre-screening")
     return parser.parse_args()
 
 
