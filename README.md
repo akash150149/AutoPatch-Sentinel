@@ -8,7 +8,7 @@
 > 
 > Now with **Stage 0 Static Analysis (SAST)** and a **Tactical Web Command Center** for live visual demos.
 
----
+<!-- ---
 
 ## 🏆 Key Differentiator
 
@@ -19,7 +19,7 @@ Most automated patching tools stop at *generating* a diff. **AutoPatch Sentinel 
 | Typical LLM patcher | ❌ | ✅ | ✅ | ❌ |
 | **AutoPatch Sentinel** | ✅ | ✅ | ✅ | ✅ ✅ ✅ |
 
----
+--- -->
 
 ## 🏗️ Architecture
 
