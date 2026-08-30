@@ -6,7 +6,7 @@
 > in C/C++ services, generates minimal AI-driven patches, and **proves the fix holds**
 > through a rigorous 3-stage verification harness.
 
----
+<!-- ---
 
 ## 🏆 Key Differentiator
 
@@ -37,7 +37,7 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow in __asan_memcpy
 
 **Cause:** A 512-byte attacker-controlled field was copied into a 256-byte heap buffer with no bounds check. The pipeline found, patched, and verified the fix autonomously.
 
----
+--- -->
 
 ## 🏗️ Architecture
 

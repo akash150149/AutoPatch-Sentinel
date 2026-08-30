@@ -214,16 +214,51 @@ def _call_openai(prompt: str, model: str = "gpt-4o") -> tuple[str, int]:
         raise ImportError("openai not installed. Run: pip install openai")
 
 
+def _get_ollama_base_url() -> str:
+    """Get the Ollama base URL, checking environment variables and WSL host resolution."""
+    # Check custom environment variable first
+    if "OLLAMA_BASE_URL" in os.environ:
+        return os.environ["OLLAMA_BASE_URL"].rstrip("/") + "/v1"
+    if "OLLAMA_HOST" in os.environ:
+        host = os.environ["OLLAMA_HOST"]
+        if not host.startswith("http"):
+            host = f"http://{host}"
+        return host.rstrip("/") + "/v1"
+    
+    # Try localhost first
+    base_url = "http://localhost:11434/v1"
+    
+    # In WSL2, if localhost is unreachable, we can resolve Windows host IP
+    if os.path.exists("/proc/version") and "microsoft" in open("/proc/version", "r").read().lower():
+        try:
+            import urllib.request
+            urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1)
+        except Exception:
+            # Localhost failed, try gateway IP from resolv.conf
+            try:
+                with open("/etc/resolv.conf", "r") as f:
+                    for line in f:
+                        if line.strip().startswith("nameserver"):
+                            host_ip = line.strip().split()[1]
+                            base_url = f"http://{host_ip}:11434/v1"
+                            break
+            except Exception:
+                pass
+
+    return base_url
+
+
 def _call_ollama(prompt: str, model: str = "codellama") -> tuple[str, int]:
     """
     Call local Ollama API using OpenAI-compatible endpoint.
-    No API key required. Ollama must be running: `ollama serve`
-    Default base URL: http://localhost:11434/v1
+    No API key required. Ollama must be running.
+    Default base URL: http://localhost:11434/v1 or detected host IP.
     """
+    base_url = _get_ollama_base_url()
     try:
         from openai import OpenAI
         client = OpenAI(
-            base_url="http://localhost:11434/v1",
+            base_url=base_url,
             api_key="ollama",   # Ollama ignores this but the library requires a non-empty value
         )
         response = client.chat.completions.create(
@@ -242,9 +277,10 @@ def _call_ollama(prompt: str, model: str = "codellama") -> tuple[str, int]:
         raise ImportError("openai not installed. Run: pip install openai")
     except Exception as e:
         raise RuntimeError(
-            f"Ollama call failed: {e}\n"
-            "Make sure Ollama is running: `ollama serve`\n"
-            f"And the model is pulled: `ollama pull {model}`"
+            f"Ollama call failed at '{base_url}': {e}\n"
+            "1. Verify Ollama is running on your system (it runs as a background service/system tray app on Windows).\n"
+            f"2. Check if the model is downloaded: `ollama list` or `ollama pull {model}`\n"
+            "3. If in WSL, you can explicitly set the host: `export OLLAMA_BASE_URL=http://localhost:11434`"
         )
 
 

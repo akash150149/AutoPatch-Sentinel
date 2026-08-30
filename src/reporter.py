@@ -69,7 +69,7 @@ class Reporter:
         Returns (markdown_path, json_path).
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        status = "VERIFIED" if verification.all_passed else "FAILED"
+        status = "VERIFIED" if (verification and verification.all_passed) else "FAILED"
         base_name = f"{target_name}_{timestamp}_{status}"
 
         md_path   = self.reports_dir / f"{base_name}.md"
@@ -102,13 +102,13 @@ class Reporter:
         target_name: str,
         crash: CrashReport,
         patch: Optional[PatchAttempt],
-        verification: VerificationResult,
+        verification: Optional[VerificationResult],
         crash_input_path: Optional[Path],
         total_duration_s: float,
         retry_count: int,
         timestamp: str,
     ) -> str:
-        status_badge = "✅ **FIX VERIFIED**" if verification.all_passed else "❌ **FIX FAILED**"
+        status_badge = "✅ **FIX VERIFIED**" if (verification and verification.all_passed) else "❌ **FIX FAILED**"
         severity_emoji = {
             "CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"
         }.get(crash.severity, "⚪")
@@ -130,7 +130,7 @@ class Reporter:
             f"| CWE | [{crash.cwe_id}](https://cwe.mitre.org/data/definitions/{crash.cwe_id.replace('CWE-','')}.html) |" if crash.cwe_id else "| CWE | Unknown |",
             f"| Severity | {severity_emoji} {crash.severity} |",
             f"| Crash Location | `{crash.crash_function}()` in `{crash.crash_file}:{crash.crash_line}` |",
-            f"| Fix Status | {'✅ Verified' if verification.all_passed else '❌ Not Verified'} |",
+            f"| Fix Status | {'✅ Verified' if (verification and verification.all_passed) else '❌ Not Verified'} |",
             f"| LLM Attempts | {retry_count + 1} |",
             f"| Total Pipeline Duration | {total_duration_s:.1f}s |",
             f"",
@@ -160,7 +160,7 @@ class Reporter:
             # ── 3. Root Cause Analysis ───────────────────────────────────────
             f"## 3. Root Cause Analysis",
             f"",
-            f"*Automated analysis by LLM ({patch.attempt_no} attempt(s)):*",
+            f"*Automated analysis by LLM ({patch.attempt_no if patch else 0} attempt(s)):*",
             f"",
             f"{patch.explanation if patch else '_No patch generated_'}",
             f"",
@@ -178,30 +178,31 @@ class Reporter:
             # ── 5. Verification Evidence ─────────────────────────────────────
             f"## 5. Verification Evidence",
             f"",
-            verification.summary_table(),
+            verification.summary_table() if verification else "_No verification performed (patch generation failed)_",
             f"",
         ]
 
-        for s in verification.stage_results:
-            icon = "✅" if s.passed else "❌"
-            sections += [
-                f"### {icon} {s.stage.value}",
-                f"",
-                f"**Result:** {'PASS' if s.passed else 'FAIL'}  ",
-                f"**Duration:** {s.duration_s:.1f}s  ",
-                f"**Details:** {s.details}",
-                f"",
-            ]
-            if not s.passed and s.error_output:
+        if verification:
+            for s in verification.stage_results:
+                icon = "✅" if s.passed else "❌"
                 sections += [
-                    f"<details><summary>Error Output</summary>",
+                    f"### {icon} {s.stage.value}",
                     f"",
-                    f"```",
-                    s.error_output[:2000],
-                    f"```",
-                    f"</details>",
+                    f"**Result:** {'PASS' if s.passed else 'FAIL'}  ",
+                    f"**Duration:** {s.duration_s:.1f}s  ",
+                    f"**Details:** {s.details}",
                     f"",
                 ]
+                if not s.passed and s.error_output:
+                    sections += [
+                        f"<details><summary>Error Output</summary>",
+                        f"",
+                        f"```",
+                        s.error_output[:2000],
+                        f"```",
+                        f"</details>",
+                        f"",
+                    ]
 
         sections += [
             f"---",
@@ -212,7 +213,7 @@ class Reporter:
             f"| Property | Value |",
             f"|----------|-------|",
             f"| Crash Input | `{crash_input_path.name if crash_input_path else 'N/A'}` |",
-            f"| LLM Provider | `{'Gemini / Claude / OpenAI'}` |",
+            f"| LLM Provider | `{'Gemini / Claude / OpenAI / Ollama'}` |",
             f"| LLM Tokens Used | `{patch.tokens_used if patch else 0}` |",
             f"| Pipeline Version | AutoPatch Sentinel v1.0.0 |",
             f"",
@@ -232,7 +233,7 @@ class Reporter:
         target_name: str,
         crash: CrashReport,
         patch: Optional[PatchAttempt],
-        verification: VerificationResult,
+        verification: Optional[VerificationResult],
         crash_input_path: Optional[Path],
         total_duration_s: float,
         retry_count: int,
@@ -271,7 +272,7 @@ class Reporter:
                 "tokens_used": patch.tokens_used if patch else 0,
             },
             "verification": {
-                "overall": "PASS" if verification.all_passed else "FAIL",
+                "overall": "PASS" if (verification and verification.all_passed) else "FAIL",
                 "stages": [
                     {
                         "stage": s.stage.value,
@@ -280,7 +281,7 @@ class Reporter:
                         "duration_s": round(s.duration_s, 2),
                     }
                     for s in verification.stage_results
-                ],
+                ] if verification else [],
             },
             "pipeline": {
                 "total_duration_s": round(total_duration_s, 2),
