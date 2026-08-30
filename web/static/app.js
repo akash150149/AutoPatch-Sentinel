@@ -362,6 +362,7 @@ function stopPolling() {
 async function runPipeline() {
   const target   = el("sel-target")?.value   || "telemetry_parser";
   const provider = el("sel-provider")?.value || "ollama";
+  const model    = el("inp-model")?.value?.trim() || null;
   const mode     = el("sel-mode")?.value     || "seed_replay";
   const retries  = parseInt(el("inp-retries")?.value || "3");
   const noSast   = el("chk-nosast")?.checked || false;
@@ -445,6 +446,24 @@ function baseName(path) {
 
 document.addEventListener("DOMContentLoaded", () => {
   initStages();
+
+  // ── Provider → Model auto-fill ────────────────────────────────────────────
+  const PROVIDER_DEFAULTS = {
+    "ollama":  "llama3.2",
+    "gemini":  "gemini-2.0-flash",
+    "claude":  "claude-3-5-haiku-20241022",
+    "openai":  "gpt-4o-mini",
+  };
+
+  const selProvider = el("sel-provider");
+  const inpModel    = el("inp-model");
+
+  if (selProvider && inpModel) {
+    selProvider.addEventListener("change", () => {
+      const defaultModel = PROVIDER_DEFAULTS[selProvider.value] || "";
+      inpModel.value = defaultModel;
+    });
+  }
 
   // Wire buttons
   const btnRun   = el("btn-run");

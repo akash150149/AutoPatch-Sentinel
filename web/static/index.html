@@ -40,11 +40,19 @@
       <div>
         <label for="sel-provider">LLM</label>
         <select id="sel-provider">
-          <option value="ollama">Ollama (local)</option>
           <option value="gemini">Gemini</option>
+          <option value="ollama">Ollama (local)</option>
           <option value="claude">Claude</option>
           <option value="openai">OpenAI</option>
         </select>
+      </div>
+
+      <!-- Model override -->
+      <div>
+        <label for="inp-model">Model</label>
+        <input type="text" id="inp-model" value="gemini-2.0-flash"
+               placeholder="e.g. gemini-2.0-flash, llama3.2"
+               style="width:150px" />
       </div>
 
       <!-- Mode -->

@@ -59,7 +59,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 class RunRequest(BaseModel):
     target: str = "telemetry_parser"
     provider: str = "ollama"
-    model: str | None = None
+    model: str | None = "llama3.2"  # matches what user has pulled
     mode: str = "seed_replay"
     max_retries: int = 3
     fuzz_duration: float = 30.0
@@ -167,6 +167,14 @@ async def get_report(filename: str):
 def _run_pipeline_thread(req: RunRequest):
     """Run the pipeline in a background thread so the API stays responsive."""
     setup_logging(verbose=False)
+
+    # ── WSL2 Ollama networking note ───────────────────────────────────────────
+    # In WSL2, the Windows host IP is read from /etc/resolv.conf nameserver.
+    # Ollama on Windows must be configured with OLLAMA_HOST=0.0.0.0 so it
+    # listens on the WSL bridge interface, not just Windows loopback.
+    # The llm_patcher._get_ollama_base_url() already handles reading the
+    # nameserver IP automatically — no override needed here.
+    # If OLLAMA_BASE_URL is set in the shell, that takes precedence.
 
     # Build a fake argparse.Namespace matching orchestrator.run_pipeline() signature
     args = argparse.Namespace(

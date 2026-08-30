@@ -5,62 +5,53 @@
 > An end-to-end security automation pipeline that discovers memory safety vulnerabilities
 > in C/C++ services, generates minimal AI-driven patches, and **proves the fix holds**
 > through a rigorous 3-stage verification harness.
-
-<!-- ---
-
-## 🏆 Key Differentiator
-
-Most automated patching tools stop at *generating* a diff. **AutoPatch Sentinel proves the fix works** before reporting it as complete:
-
-| Tool | Find Bug | Generate Patch | Verify Fix |
-|------|----------|---------------|-----------|
-| Typical LLM patcher | ✅ | ✅ | ❌ |
-| **AutoPatch Sentinel** | ✅ | ✅ | ✅ ✅ ✅ |
+> 
+> Now with **Stage 0 Static Analysis (SAST)** and a **Tactical Web Command Center** for live visual demos.
 
 ---
 
-## 🎯 Live Demo: Confirmed Working
+## 🏆 Key Differentiator
 
-The following crash was captured live during development (see [`crashes/`](crashes/)):
+Most automated patching tools stop at *generating* a diff. **AutoPatch Sentinel proves the fix works** before reporting it as complete — and now independently confirms it with static analysis *before* fuzzing even begins:
 
-```
-==14642==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x511000000140
-WRITE of size 512 at 0x511000000140 thread T0
-    #0 __asan_memcpy
-    #1 parse_tlv_payload  telemetry_parser.c:111
-    #2 parse_telemetry_frame  telemetry_parser.c:155
-    #3 main  telemetry_parser.c:234
+| Tool | Static Analysis | Find Bug | Generate Patch | Verify Fix |
+|------|----------------|----------|---------------|-----------|
+| Typical LLM patcher | ❌ | ✅ | ✅ | ❌ |
+| **AutoPatch Sentinel** | ✅ | ✅ | ✅ | ✅ ✅ ✅ |
 
-0x511000000140 is located 0 bytes after 256-byte region [0x511000000040, 0x511000000140)
-SUMMARY: AddressSanitizer: heap-buffer-overflow in __asan_memcpy
-```
-
-**Cause:** A 512-byte attacker-controlled field was copied into a 256-byte heap buffer with no bounds check. The pipeline found, patched, and verified the fix autonomously.
-
---- -->
+---
 
 ## 🏗️ Architecture
 
 ```
-Fuzz → CRASH FOUND ──► Triage ──► LLM Patch ──► Rebuild
-                                                    │
-                    ┌───────────────────────────────▼────────────────────────────┐
-                    │              Prove the Fix Holds (Verification Gate)        │
-                    │                                                             │
-                    │  Stage 1: Crash Invalidation                               │
-                    │    Replay exact crashing input → must execute cleanly      │
-                    │                                                             │
-                    │  Stage 2: Regression Suite                                 │
-                    │    Run all valid test payloads → all must parse correctly  │
-                    │                                                             │
-                    │  Stage 3: Re-Fuzzing Burst                                 │
-                    │    Short re-fuzz burst → no new crashes                   │
-                    └───────────────────────────────┬────────────────────────────┘
-                                                    │
-                    ┌───────────────────────────────▼────────────────────────────┐
-                    │  Fail? → Feed error back to LLM (retry ≤ 3 attempts)      │
-                    │  Pass? → Generate structured audit report ✅               │
-                    └────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Stage 0: Static Analysis (SAST Pre-screening)                              │
+│  cppcheck + clang-tidy — independently flags bugs before any fuzzing       │
+└────────────────────────────┬────────────────────────────────────────────────┘
+                             │ Static Findings (CWE IDs, line numbers)
+                             ▼
+Compile ASan ──► Fuzz (Dynamic) ──► Crash Found ──► Triage Engine
+                                                          │
+                                              ┌───────────▼────────────┐
+                                              │  Static + Dynamic       │
+                                              │  Correlation            │
+                                              │  "Flagged at line X    │
+                                              │   by SAST, confirmed   │
+                                              │   exploitable at        │
+                                              │   runtime via ASan"    │
+                                              └───────────┬────────────┘
+                                                          │
+                                                    LLM Patching
+                                                          │
+                                            ┌─────────────▼──────────────────────────────┐
+                                            │  Prove the Fix Holds (Verification Gate)   │
+                                            │  Stage 1: Crash Invalidation               │
+                                            │  Stage 2: Regression Suite                 │
+                                            │  Stage 3: Re-Fuzzing Burst                 │
+                                            └─────────────┬──────────────────────────────┘
+                                                          │
+                                              Fail? → Feed error back to LLM (retry ≤ 3)
+                                              Pass? → Generate structured audit report ✅
 ```
 
 ---
@@ -81,7 +72,8 @@ memcpy(field->data, ptr, field_len);                 // ← VULNERABLE: field_le
 
 An attacker sends a packet with `field_len = 512`. The `memcpy` writes 512 bytes into a 256-byte heap allocation → **heap-buffer-overflow** → crash / potential code execution.
 
-**ASan detection:** `WRITE of size 512` past a `256-byte region`.
+**ASan detection:** `WRITE of size 512` past a `256-byte region`.  
+**SAST detection:** `cppcheck` flags `bufferAccessOutOfBounds [CWE-122]` at line 111 **before fuzzing**.
 
 ---
 
@@ -122,20 +114,30 @@ Cybersec/
 ├── reports/                         ← Markdown + JSON audit reports
 │
 ├── src/
-│   ├── orchestrator.py              ← Main CLI & end-to-end pipeline loop
+│   ├── orchestrator.py              ← Main pipeline loop (7 stages) + pipeline_state event bus
 │   ├── compiler.py                  ← Clang + ASan/UBSan build automation
 │   ├── fuzzer.py                    ← libFuzzer / AFL++ / seed-replay controller
-│   ├── triage.py                    ← ASan/UBSan log parser → structured CrashReport
+│   ├── sast.py                      ← [NEW] Stage 0: cppcheck + clang-tidy wrapper
+│   ├── triage.py                    ← ASan/UBSan log parser → structured CrashReport (+ SAST correlation)
 │   ├── llm_patcher.py               ← LLM integration (Gemini/Claude/OpenAI/Ollama)
 │   ├── verifier.py                  ← 3-stage verification harness
-│   └── reporter.py                  ← Markdown + JSON audit report generator
+│   └── reporter.py                  ← Markdown + JSON audit report generator (+ SAST section)
+│
+├── web/                             ← [NEW] Tactical Web Command Center
+│   ├── app.py                       ← FastAPI backend (status/run/reset/reports endpoints)
+│   ├── __init__.py
+│   └── static/
+│       ├── index.html               ← Single-page mission control dashboard
+│       ├── app.css                  ← Cyberpunk dark-mode CSS
+│       └── app.js                   ← 1s polling, DOM updates, diff renderer
 │
 ├── tests/
 │   ├── test_triage.py               ← 21 unit tests for ASan log parser
-│   └── test_patch_applicator.py     ← 11 unit tests for diff applicator
+│   ├── test_patch_applicator.py     ← 11 unit tests for diff applicator
+│   └── test_sast.py                 ← [NEW] 20 unit tests for SAST module
 │
-├── config.yaml                      ← Pipeline configuration
-├── requirements.txt                 ← Python dependencies
+├── config.yaml                      ← Pipeline configuration (incl. sast: and web: blocks)
+├── requirements.txt                 ← Python dependencies (incl. fastapi, uvicorn)
 └── README.md
 ```
 
@@ -144,10 +146,13 @@ Cybersec/
 ## ⚙️ Prerequisites
 
 | Tool | Purpose | Install |
-|------|---------|---------|
-| **clang** (≥ 12) | Compile with ASan/UBSan | `sudo apt install clang` |
-| **Python 3.10+** | Pipeline orchestration | Pre-installed on Ubuntu |
-| **Ollama** (or cloud API) | LLM patch generation | [ollama.ai](https://ollama.ai) |
+|------|---------|---------| 
+| **clang** (≥ 12) | Compile with ASan/UBSan | `sudo apt install clang` (WSL) |
+| **cppcheck** | Stage 0 SAST static analysis | `sudo apt install cppcheck` (WSL) |
+| **clang-tidy** | Stage 0 SAST supplementary checks | `sudo apt install clang-tools` (WSL) |
+| **Python 3.10+** | Pipeline orchestration | Pre-installed on Ubuntu/WSL |
+| **Gemini API key** | LLM patch generation (recommended) | [aistudio.google.com](https://aistudio.google.com) |
+| **Ollama** (optional, local) | LLM patch generation offline | [ollama.com](https://ollama.com) |
 | **WSL (Ubuntu)** | Linux environment on Windows | Windows Store |
 
 ---
@@ -157,61 +162,49 @@ Cybersec/
 ### 1. Install System Dependencies (WSL)
 
 ```bash
-sudo apt update && sudo apt install -y clang build-essential python3-venv
+sudo apt update && sudo apt install -y clang clang-tools cppcheck build-essential python3-pip
 ```
 
-### 2. Set Up Python Environment (WSL)
+### 2. Install Python Dependencies (WSL)
 
 ```bash
 cd /mnt/d/Cybersec
-python3 -m venv .venv
-source .venv/bin/activate
-pip install rich pyyaml openai
+pip install -r requirements.txt
 ```
 
-### 3. Generate Seed Files (WSL)
+### 3. Set LLM API Key
 
 ```bash
-cd /mnt/d/Cybersec/targets/telemetry_parser
-python3 generate_seeds.py
+# Gemini (recommended — free tier available)
+export GEMINI_API_KEY="your-gemini-api-key"
+
+# Or Claude
+export ANTHROPIC_API_KEY="your-key"
+
+# Or OpenAI
+export OPENAI_API_KEY="your-key"
+
+# Permanent: add to ~/.bashrc
+echo 'export GEMINI_API_KEY="your-key"' >> ~/.bashrc && source ~/.bashrc
 ```
 
-### 4. Build the Vulnerable Target (WSL)
-
-```bash
-make clean && make asan
-```
-
-### 5. Manually Verify the Bug (WSL)
-
-```bash
-# Valid packet — should parse cleanly
-./telemetry_parser_asan tests/valid_gps_pkt.bin
-
-# Malicious packet — should trigger ASan heap-buffer-overflow
-ASAN_OPTIONS=detect_leaks=0 ./telemetry_parser_asan ../seeds/crash_overflow.bin
-```
-
-### 6. Run the Full Pipeline (WSL)
+### 4. Launch the Tactical Web Command Center
 
 ```bash
 cd /mnt/d/Cybersec
-source .venv/bin/activate
+python3 -m web.app
+```
 
-python3 src/orchestrator.py \
+Open your browser to **`http://localhost:8000`**, configure the pipeline, and click **⚡ Engage Pipeline**.
+
+### 5. Or Run via CLI
+
+```bash
+python3 -m src.orchestrator \
   --target telemetry_parser \
-  --provider ollama \
-  --model llama3.2:3b \
-  --mode seed_replay \
-  --verbose
-```
-
-### 7. View Results
-
-```bash
-ls reports/      # Markdown + JSON audit reports
-ls patches/      # LLM-generated patch diffs
-ls crashes/      # Captured crash inputs + ASan logs
+  --provider gemini \
+  --model gemini-2.0-flash \
+  --mode seed_replay
 ```
 
 ---
@@ -220,13 +213,16 @@ ls crashes/      # Captured crash inputs + ASan logs
 
 | Step | Module | What Happens |
 |------|--------|-------------|
+| **0. Static Analysis (SAST)** | `sast.py` | Runs `cppcheck` + `clang-tidy` on source; flags CWE-122, CWE-190 **before** fuzzing |
 | **1. Build** | `compiler.py` | Compiles target with `-fsanitize=address,undefined` |
 | **2. Fuzz** | `fuzzer.py` | Replays seeds / runs libFuzzer; captures crash + ASan log |
-| **3. Triage** | `triage.py` | Parses ASan output → error type, CWE, crash line, stack trace |
-| **4. Patch** | `llm_patcher.py` | Sends crash context to LLM; receives unified diff; applies it |
+| **3. Triage** | `triage.py` | Parses ASan output → error type, CWE, crash line; correlates with SAST findings |
+| **4. Patch** | `llm_patcher.py` | Sends static+dynamic context to LLM; receives unified diff; applies it |
 | **5. Rebuild** | `compiler.py` | Recompiles patched source with ASan |
 | **6. Verify** | `verifier.py` | Runs 3 verification stages; feeds failures back to LLM |
-| **7. Report** | `reporter.py` | Generates Markdown + JSON audit report |
+| **7. Report** | `reporter.py` | Generates Markdown + JSON audit report with SAST correlation section |
+
+> **Stage 0 skip:** Use `--no-sast` flag to skip static analysis if tools are not installed.
 
 ---
 
@@ -238,24 +234,65 @@ ls crashes/      # Captured crash inputs + ASan logs
 | **Stage 2: Regression Suite** | All `valid_*.bin` test packets | All exit 0, parse correctly |
 | **Stage 3: Re-Fuzzing Burst** | All seeds against patched binary | Zero new crashes |
 
-All three must pass. If any fails → the error is fed back to the LLM for a corrected patch (up to 3 retries).
+All three must pass. If any fails → the error is fed back to the LLM for a corrected patch (up to `--max-retries` attempts).
+
+---
+
+## 🌐 Tactical Web Command Center
+
+The Web Command Center provides a **real-time visual pipeline dashboard** for live demonstrations.
+
+### Launch
+
+```bash
+# From project root (inside WSL)
+python3 -m web.app
+
+# Then open in Windows browser
+http://localhost:8000
+```
+
+### Dashboard Features
+
+| Panel | What it shows |
+|-------|--------------|
+| **Stage Progress Bar** | Animated 8-stage pipeline progress (SAST → Build → Fuzz → Triage → Patch → Rebuild → Verify → Report) |
+| **SAST Pre-screening Card** | cppcheck findings with CWE tags and line numbers |
+| **Dynamic Crash Card** | ASan error type, severity badge, crash location, raw trace |
+| **LLM Patch Diff Viewer** | Syntax-highlighted unified diff (green additions, red deletions) |
+| **3 Verification Gate Cards** | Gates light up sequentially: ⚪ waiting → 🟡 running → 🟢 pass / 🔴 fail |
+| **Audit Reports List** | Links to generated Markdown and JSON reports |
+| **Terminal Log Streamer** | Live pipeline events |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Dashboard HTML |
+| `/api/status` | GET | Current pipeline state (polled every 1s) |
+| `/api/run` | POST | Start pipeline with target/provider/mode options |
+| `/api/reset` | POST | Reset state for a fresh demo run |
+| `/api/reports` | GET | List all generated audit reports |
+| `/api/reports/{name}` | GET | Read a specific report (MD or JSON) |
 
 ---
 
 ## 🤖 LLM Support
 
-| Provider | Model | Set Up |
-|----------|-------|--------|
-| **Ollama** (local, free) | `llama3.2:3b`, `codellama` | `ollama serve` |
-| Google Gemini | `gemini-2.5-pro` | `export GEMINI_API_KEY=...` |
-| Anthropic Claude | `claude-sonnet-4-5` | `export ANTHROPIC_API_KEY=...` |
-| OpenAI | `gpt-4o` | `export OPENAI_API_KEY=...` |
+| Provider | Recommended Model | Set Up |
+|----------|------------------|--------|
+| **Google Gemini** *(recommended)* | `gemini-2.0-flash` | `export GEMINI_API_KEY=...` |
+| **Anthropic Claude** | `claude-3-5-haiku-20241022` | `export ANTHROPIC_API_KEY=...` |
+| **OpenAI** | `gpt-4o-mini` | `export OPENAI_API_KEY=...` |
+| **Ollama** *(local, free)* | `llama3.2`, `codellama` | `ollama serve` + `ollama pull llama3.2` |
+
+> **WSL + Ollama Note:** When running the pipeline inside WSL with Ollama on Windows, Ollama must be configured to listen on all interfaces: `$env:OLLAMA_HOST="0.0.0.0"; ollama serve` in Windows PowerShell.
 
 ```bash
-# Examples
-python3 src/orchestrator.py --provider ollama --model llama3.2:3b
-python3 src/orchestrator.py --provider gemini
-python3 src/orchestrator.py --provider claude --max-retries 3
+# CLI examples
+python3 -m src.orchestrator --provider gemini --model gemini-2.0-flash
+python3 -m src.orchestrator --provider claude --model claude-3-5-haiku-20241022
+python3 -m src.orchestrator --provider ollama --model llama3.2 --no-sast
 ```
 
 ---
@@ -263,17 +300,21 @@ python3 src/orchestrator.py --provider claude --max-retries 3
 ## 🧪 Running Tests
 
 ```bash
-# In Windows PowerShell
-cd d:\Cybersec
-python -m pytest tests/ -v
-# Result: 32 passed
+# Run full test suite (works in WSL or Windows PowerShell)
+cd /mnt/d/Cybersec
+pytest tests/ -v
+
+# Expected: 52+ tests passed
+#   test_triage.py         — 21 tests: ASan log parser
+#   test_patch_applicator.py — 11 tests: diff applicator
+#   test_sast.py           — 20 tests: SAST XML parser, correlation, graceful fallback
 ```
 
 ---
 
 ## 📊 Sample Audit Report Output
 
-```
+```markdown
 ## 1. Executive Summary
 
 | Field          | Value                                         |
@@ -286,13 +327,24 @@ python -m pytest tests/ -v
 | Fix Status     | ✅ Verified                                   |
 | LLM Attempts   | 1                                             |
 
+## 2b. Static Analysis Pre-Screening (SAST)
+
+> ⚠️ 1 static finding correlated with the crash site — root cause flagged by
+> static analysis AND confirmed exploitable at runtime.
+
+| Tool      | Severity | CWE     | Message                         | Line |
+|-----------|----------|---------|---------------------------------|------|
+| cppcheck  | error    | CWE-122 | Buffer access out-of-bounds ... | 111  |
+
+> Static → Dynamic confirmation: warning at line 111 matches ASan crash at telemetry_parser.c:111.
+
 ## 5. Verification Evidence
 
-┌─────────────────────────────────────┬────────┐
-│ Stage 1: Crash Invalidation         │ ✅ PASS │
-│ Stage 2: Regression Suite           │ ✅ PASS │
-│ Stage 3: Re-Fuzzing Burst           │ ✅ PASS │
-└─────────────────────────────────────┴────────┘
+| Stage                         | Result  |
+|-------------------------------|---------|
+| Stage 1: Crash Invalidation   | ✅ PASS |
+| Stage 2: Regression Suite     | ✅ PASS |
+| Stage 3: Re-Fuzzing Burst     | ✅ PASS |
 ```
 
 ---
@@ -302,11 +354,14 @@ python -m pytest tests/ -v
 | Error | Fix |
 |-------|-----|
 | `clang: not found` | `sudo apt install clang` in WSL |
+| `cppcheck not found in PATH` | `sudo apt install cppcheck` — or use `--no-sast` to skip |
+| `ModuleNotFoundError: fastapi` | `pip install -r requirements.txt` |
+| `Neither clang nor gcc found` | Pipeline must run in WSL, not Windows PowerShell |
+| `Ollama connection refused` | Set `OLLAMA_HOST=0.0.0.0` in Windows before `ollama serve` |
+| `404 models/llama3.2 not found` | Wrong model name for the provider — check the Model field in the dashboard matches your provider |
+| `No such file: telemetry_parser_asan` | Run pipeline via the web server or `make asan` first |
+| `No crashes found` | Run `python3 targets/telemetry_parser/generate_seeds.py` first |
 | `externally-managed-environment` | Use venv: `python3 -m venv .venv && source .venv/bin/activate` |
-| `No such file: telemetry_parser_asan` | Run `make asan` in WSL first |
-| `No crashes found` | Run `python3 generate_seeds.py` first |
-| Ollama connection refused | Run `ollama serve` (or it's already running — check with `curl localhost:11434`) |
-| `ModuleNotFoundError` | Activate venv: `source .venv/bin/activate` |
 
 ---
 
@@ -316,4 +371,5 @@ The vulnerable target (`telemetry_parser.c`) contains **intentional memory safet
 
 ---
 
-*AutoPatch Sentinel — Automated Vulnerability Remediation Pipeline*
+*AutoPatch Sentinel — Automated Vulnerability Remediation Pipeline*  
+*Static Analysis · Dynamic Fuzzing · AI-Driven Patching · 3-Stage Verification*
